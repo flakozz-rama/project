@@ -1,31 +1,29 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
-	"math/rand"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
+	"go-backend/internal/database"
 	"go-backend/internal/models"
+
+	"github.com/jackc/pgx/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type Server struct {
-	mux           *http.ServeMux
-	users         []models.User
-	properties    []models.Property
-	favourites    map[int][]int
-	bookings      []models.Booking
-	conversations []models.Conversation
+	mux *http.ServeMux
+	db  *database.DB
 }
 
-func NewServer() *Server {
+func NewServer(db *database.DB) *Server {
 	s := &Server{
-		mux:        http.NewServeMux(),
-		favourites: make(map[int][]int),
+		mux: http.NewServeMux(),
+		db:  db,
 	}
-	s.seedData()
 	s.registerRoutes()
 	return s
 }
@@ -33,88 +31,6 @@ func NewServer() *Server {
 func (s *Server) Router() http.Handler {
 	return withCORS(s.mux)
 }
-
-// -------- seed data --------
-
-func (s *Server) seedData() {
-	s.users = []models.User{
-		{ID: 1, Email: "demo@gorent.com", Name: "Demo User"},
-	}
-
-	s.properties = []models.Property{
-		{
-			ID:            1,
-			Title:         "Modern Downtown Apartment",
-			Location:      "San Francisco, CA",
-			PricePerNight: 180,
-			Rating:        4.8,
-			Reviews:       124,
-			Guests:        4,
-			Bedrooms:      2,
-			Bathrooms:     2,
-			Type:          "apartment",
-			Amenities:     []string{"wifi", "parking", "ac", "kitchen"},
-			Image:         "https://images.unsplash.com/photo-1594873604892-b599f847e859",
-		},
-		{
-			ID:            2,
-			Title:         "Luxury Villa with Ocean View",
-			Location:      "Miami Beach, FL",
-			PricePerNight: 450,
-			Rating:        4.9,
-			Reviews:       89,
-			Guests:        8,
-			Bedrooms:      4,
-			Bathrooms:     3,
-			Type:          "villa",
-			Amenities:     []string{"wifi", "pool", "ac", "kitchen", "gym"},
-			Image:         "https://images.unsplash.com/photo-1706808849780-7a04fbac83ef",
-		},
-	}
-
-	s.favourites[1] = []int{1}
-
-	s.bookings = []models.Booking{
-		{
-			ID:         1,
-			UserID:     1,
-			PropertyID: 1,
-			StartDate:  "2025-01-10",
-			EndDate:    "2025-01-15",
-			Guests:     2,
-			Status:     "confirmed",
-			CreatedAt:  time.Now().AddDate(0, -1, 0),
-		},
-	}
-
-	s.conversations = []models.Conversation{
-		{
-			ID:          1,
-			ContactName: "Sarah Johnson",
-			ContactType: "host",
-			Property:    "Modern Downtown Apartment",
-			Messages: []models.Message{
-				{
-					ID:             1,
-					ConversationID: 1,
-					SenderID:       2,
-					Text:           "Hi! I have a booking at your property next week. Just wanted to confirm the check-in time.",
-					CreatedAt:      time.Now().Add(-2 * time.Hour),
-					Read:           true,
-				},
-				{
-					ID:             2,
-					ConversationID: 1,
-					SenderID:       1,
-					Text:           "Check-in is from 3 PM to 8 PM. I'll send you the door code a day before arrival.",
-					CreatedAt:      time.Now().Add(-90 * time.Minute),
-					Read:           true,
-				},
-			},
-		},
-	}
-}
-
 
 func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/health", s.handleHealth)
@@ -127,11 +43,14 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/messages", s.handleMessages)
 }
 
-
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
 }
 
 func parseIDFromPath(path string) (int, bool) {
@@ -157,16 +76,41 @@ func (s *Server) handleSignIn(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+
 	type req struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
 	var body req
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
 
+	var user models.User
+	err := s.db.Pool.QueryRow(r.Context(),
+		`SELECT id, email, name, password_hash, created_at FROM users WHERE email = $1`,
+		body.Email,
+	).Scan(&user.ID, &user.Email, &user.Name, &user.PasswordHash, &user.CreatedAt)
+
+	if err == pgx.ErrNoRows {
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(body.Password)); err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+
+	// TODO: implement proper JWT token generation
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": "demo-token",
-		"user":  s.users[0],
+		"user":  user,
 	})
 }
 
@@ -175,20 +119,50 @@ func (s *Server) handleProperties(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+
 	location := strings.ToLower(r.URL.Query().Get("location"))
 	propType := r.URL.Query().Get("type")
 
-	res := make([]models.Property, 0, len(s.properties))
-	for _, p := range s.properties {
-		if location != "" && !strings.Contains(strings.ToLower(p.Location), location) {
-			continue
-		}
-		if propType != "" && p.Type != propType {
-			continue
-		}
-		res = append(res, p)
+	query := `SELECT id, title, location, price_per_night, rating, reviews,
+	          guests, bedrooms, bathrooms, type, amenities, COALESCE(image, ''), owner_id, created_at
+	          FROM properties WHERE 1=1`
+	args := []any{}
+	argNum := 1
+
+	if location != "" {
+		query += ` AND LOWER(location) LIKE $` + strconv.Itoa(argNum)
+		args = append(args, "%"+location+"%")
+		argNum++
 	}
-	writeJSON(w, http.StatusOK, res)
+	if propType != "" {
+		query += ` AND type = $` + strconv.Itoa(argNum)
+		args = append(args, propType)
+		argNum++
+	}
+
+	query += ` ORDER BY created_at DESC`
+
+	rows, err := s.db.Pool.Query(r.Context(), query, args...)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+	defer rows.Close()
+
+	properties := []models.Property{}
+	for rows.Next() {
+		var p models.Property
+		err := rows.Scan(&p.ID, &p.Title, &p.Location, &p.PricePerNight, &p.Rating,
+			&p.Reviews, &p.Guests, &p.Bedrooms, &p.Bathrooms, &p.Type,
+			&p.Amenities, &p.Image, &p.OwnerID, &p.CreatedAt)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "scan error")
+			return
+		}
+		properties = append(properties, p)
+	}
+
+	writeJSON(w, http.StatusOK, properties)
 }
 
 func (s *Server) handlePropertyByID(w http.ResponseWriter, r *http.Request) {
@@ -196,59 +170,108 @@ func (s *Server) handlePropertyByID(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+
 	id, ok := parseIDFromPath(r.URL.Path)
 	if !ok {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"})
+		writeError(w, http.StatusBadRequest, "invalid id")
 		return
 	}
-	for _, p := range s.properties {
-		if p.ID == id {
-			writeJSON(w, http.StatusOK, p)
-			return
-		}
+
+	var p models.Property
+	err := s.db.Pool.QueryRow(r.Context(),
+		`SELECT id, title, location, price_per_night, rating, reviews,
+		 guests, bedrooms, bathrooms, type, amenities, COALESCE(image, ''), owner_id, created_at
+		 FROM properties WHERE id = $1`, id,
+	).Scan(&p.ID, &p.Title, &p.Location, &p.PricePerNight, &p.Rating,
+		&p.Reviews, &p.Guests, &p.Bedrooms, &p.Bathrooms, &p.Type,
+		&p.Amenities, &p.Image, &p.OwnerID, &p.CreatedAt)
+
+	if err == pgx.ErrNoRows {
+		writeError(w, http.StatusNotFound, "not found")
+		return
 	}
-	writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, p)
 }
 
 func (s *Server) handleFavourites(w http.ResponseWriter, r *http.Request) {
-	userID := 1 // пока всегда демо‑пользователь
+	userID := 1 // TODO: get from JWT token
 
 	switch r.Method {
 	case http.MethodGet:
-		ids := s.favourites[userID]
-		res := make([]models.Property, 0, len(ids))
-		for _, id := range ids {
-			for _, p := range s.properties {
-				if p.ID == id {
-					res = append(res, p)
-				}
-			}
+		rows, err := s.db.Pool.Query(r.Context(),
+			`SELECT p.id, p.title, p.location, p.price_per_night, p.rating, p.reviews,
+			 p.guests, p.bedrooms, p.bathrooms, p.type, p.amenities, COALESCE(p.image, ''), p.owner_id, p.created_at
+			 FROM properties p
+			 INNER JOIN favourites f ON f.property_id = p.id
+			 WHERE f.user_id = $1
+			 ORDER BY f.created_at DESC`, userID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "database error")
+			return
 		}
-				writeJSON(w, http.StatusOK, res)
+		defer rows.Close()
+
+		properties := []models.Property{}
+		for rows.Next() {
+			var p models.Property
+			err := rows.Scan(&p.ID, &p.Title, &p.Location, &p.PricePerNight, &p.Rating,
+				&p.Reviews, &p.Guests, &p.Bedrooms, &p.Bathrooms, &p.Type,
+				&p.Amenities, &p.Image, &p.OwnerID, &p.CreatedAt)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "scan error")
+				return
+			}
+			properties = append(properties, p)
+		}
+		writeJSON(w, http.StatusOK, properties)
 
 	case http.MethodPost:
-		// toggle избранного
 		type req struct {
 			PropertyID int `json:"property_id"`
 		}
 		var body req
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+			writeError(w, http.StatusBadRequest, "invalid json")
 			return
 		}
 
-		ids := s.favourites[userID]
-		for i, pid := range ids {
-			if pid == body.PropertyID {
-				// удалить из избранного
-				s.favourites[userID] = append(ids[:i], ids[i+1:]...)
-				writeJSON(w, http.StatusOK, map[string]bool{"favourite": false})
-				return
-			}
+		// Check if already favourite
+		var exists bool
+		err := s.db.Pool.QueryRow(r.Context(),
+			`SELECT EXISTS(SELECT 1 FROM favourites WHERE user_id = $1 AND property_id = $2)`,
+			userID, body.PropertyID,
+		).Scan(&exists)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "database error")
+			return
 		}
 
-		s.favourites[userID] = append(ids, body.PropertyID)
-		writeJSON(w, http.StatusOK, map[string]bool{"favourite": true})
+		if exists {
+			// Remove from favourites
+			_, err = s.db.Pool.Exec(r.Context(),
+				`DELETE FROM favourites WHERE user_id = $1 AND property_id = $2`,
+				userID, body.PropertyID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "database error")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"favourite": false})
+		} else {
+			// Add to favourites
+			_, err = s.db.Pool.Exec(r.Context(),
+				`INSERT INTO favourites (user_id, property_id) VALUES ($1, $2)`,
+				userID, body.PropertyID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "database error")
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]bool{"favourite": true})
+		}
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -256,17 +279,31 @@ func (s *Server) handleFavourites(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleBookings(w http.ResponseWriter, r *http.Request) {
-	userID := 1 // демо‑пользователь
+	userID := 1 // TODO: get from JWT token
 
 	switch r.Method {
 	case http.MethodGet:
-		res := make([]models.Booking, 0)
-		for _, b := range s.bookings {
-			if b.UserID == userID {
-				res = append(res, b)
-			}
+		rows, err := s.db.Pool.Query(r.Context(),
+			`SELECT id, user_id, property_id, start_date, end_date, guests, status, created_at
+			 FROM bookings WHERE user_id = $1 ORDER BY created_at DESC`, userID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "database error")
+			return
 		}
-		writeJSON(w, http.StatusOK, res)
+		defer rows.Close()
+
+		bookings := []models.Booking{}
+		for rows.Next() {
+			var b models.Booking
+			err := rows.Scan(&b.ID, &b.UserID, &b.PropertyID, &b.StartDate, &b.EndDate,
+				&b.Guests, &b.Status, &b.CreatedAt)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "scan error")
+				return
+			}
+			bookings = append(bookings, b)
+		}
+		writeJSON(w, http.StatusOK, bookings)
 
 	case http.MethodPost:
 		type req struct {
@@ -277,22 +314,24 @@ func (s *Server) handleBookings(w http.ResponseWriter, r *http.Request) {
 		}
 		var body req
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+			writeError(w, http.StatusBadRequest, "invalid json")
 			return
 		}
 
-		id := rand.Intn(1_000_000)
-		b := models.Booking{
-			ID:         id,
-			UserID:     userID,
-			PropertyID: body.PropertyID,
-			StartDate:  body.StartDate,
-			EndDate:    body.EndDate,
-			Guests:     body.Guests,
-			Status:     "confirmed",
-			CreatedAt:  time.Now(),
+		var b models.Booking
+		err := s.db.Pool.QueryRow(r.Context(),
+			`INSERT INTO bookings (user_id, property_id, start_date, end_date, guests, status)
+			 VALUES ($1, $2, $3, $4, $5, 'confirmed')
+			 RETURNING id, user_id, property_id, start_date, end_date, guests, status, created_at`,
+			userID, body.PropertyID, body.StartDate, body.EndDate, body.Guests,
+		).Scan(&b.ID, &b.UserID, &b.PropertyID, &b.StartDate, &b.EndDate,
+			&b.Guests, &b.Status, &b.CreatedAt)
+
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "database error")
+			return
 		}
-		s.bookings = append(s.bookings, b)
+
 		writeJSON(w, http.StatusCreated, b)
 
 	default:
@@ -305,7 +344,9 @@ func (s *Server) handleConversations(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	// возвращаем список диалогов без вложенных сообщений (для списка)
+
+	userID := 1 // TODO: get from JWT token
+
 	type convoSummary struct {
 		ID          int    `json:"id"`
 		ContactName string `json:"contact_name"`
@@ -313,73 +354,136 @@ func (s *Server) handleConversations(w http.ResponseWriter, r *http.Request) {
 		Property    string `json:"property_name"`
 		LastMessage string `json:"last_message"`
 	}
-	res := make([]convoSummary, 0, len(s.conversations))
-	for _, c := range s.conversations {
-		last := ""
-		if len(c.Messages) > 0 {
-			last = c.Messages[len(c.Messages)-1].Text
-		}
-		res = append(res, convoSummary{
-			ID:          c.ID,
-			ContactName: c.ContactName,
-			ContactType: c.ContactType,
-			Property:    c.Property,
-			LastMessage: last,
-		})
+
+	rows, err := s.db.Pool.Query(r.Context(),
+		`SELECT c.id, c.contact_name, c.contact_type, COALESCE(c.property_name, ''),
+		 COALESCE((SELECT text FROM messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1), '')
+		 FROM conversations c WHERE c.user_id = $1 ORDER BY c.created_at DESC`, userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database error")
+		return
 	}
-	writeJSON(w, http.StatusOK, res)
+	defer rows.Close()
+
+	conversations := []convoSummary{}
+	for rows.Next() {
+		var c convoSummary
+		err := rows.Scan(&c.ID, &c.ContactName, &c.ContactType, &c.Property, &c.LastMessage)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "scan error")
+			return
+		}
+		conversations = append(conversations, c)
+	}
+
+	writeJSON(w, http.StatusOK, conversations)
 }
 
 func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
+	userID := 1 // TODO: get from JWT token
+
 	switch r.Method {
 	case http.MethodGet:
-		// /api/messages?conversationId=1
 		cidStr := r.URL.Query().Get("conversationId")
 		cid, err := strconv.Atoi(cidStr)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid conversationId"})
+			writeError(w, http.StatusBadRequest, "invalid conversationId")
 			return
 		}
-		for _, c := range s.conversations {
-			if c.ID == cid {
-				writeJSON(w, http.StatusOK, c.Messages)
+
+		// Verify conversation belongs to user
+		var ownerID int
+		err = s.db.Pool.QueryRow(r.Context(),
+			`SELECT user_id FROM conversations WHERE id = $1`, cid,
+		).Scan(&ownerID)
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "conversation not found")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		if ownerID != userID {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+
+		rows, err := s.db.Pool.Query(r.Context(),
+			`SELECT id, conversation_id, sender_id, text, created_at, read
+			 FROM messages WHERE conversation_id = $1 ORDER BY created_at ASC`, cid)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		defer rows.Close()
+
+		messages := []models.Message{}
+		for rows.Next() {
+			var m models.Message
+			var senderID *int
+			err := rows.Scan(&m.ID, &m.ConversationID, &senderID, &m.Text, &m.CreatedAt, &m.Read)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "scan error")
 				return
 			}
+			if senderID != nil {
+				m.SenderID = *senderID
+			}
+			messages = append(messages, m)
 		}
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "conversation not found"})
+		writeJSON(w, http.StatusOK, messages)
 
 	case http.MethodPost:
-		// добавить сообщение в диалог
 		type req struct {
 			ConversationID int    `json:"conversation_id"`
 			Text           string `json:"text"`
 		}
 		var body req
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+			writeError(w, http.StatusBadRequest, "invalid json")
 			return
 		}
 
-		for i, c := range s.conversations {
-			if c.ID == body.ConversationID {
-				id := rand.Intn(1_000_000)
-				msg := models.Message{
-					ID:             id,
-					ConversationID: c.ID,
-					SenderID:       1, // текущий пользователь (демо)
-					Text:           body.Text,
-					CreatedAt:      time.Now(),
-					Read:           true,
-				}
-				s.conversations[i].Messages = append(s.conversations[i].Messages, msg)
-				writeJSON(w, http.StatusCreated, msg)
-				return
-			}
+		// Verify conversation belongs to user
+		var ownerID int
+		err := s.db.Pool.QueryRow(r.Context(),
+			`SELECT user_id FROM conversations WHERE id = $1`, body.ConversationID,
+		).Scan(&ownerID)
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "conversation not found")
+			return
 		}
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "conversation not found"})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+		if ownerID != userID {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+
+		var m models.Message
+		err = s.db.Pool.QueryRow(r.Context(),
+			`INSERT INTO messages (conversation_id, sender_id, text, read)
+			 VALUES ($1, $2, $3, true)
+			 RETURNING id, conversation_id, sender_id, text, created_at, read`,
+			body.ConversationID, userID, body.Text,
+		).Scan(&m.ID, &m.ConversationID, &m.SenderID, &m.Text, &m.CreatedAt, &m.Read)
+
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "database error")
+			return
+		}
+
+		writeJSON(w, http.StatusCreated, m)
 
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 
+// Helper function for context (can be used later for request-scoped values)
+func contextWithUserID(ctx context.Context, userID int) context.Context {
+	return context.WithValue(ctx, "userID", userID)
+}
