@@ -13,11 +13,18 @@ import (
 	"go-backend/internal/config"
 	"go-backend/internal/database"
 	httpapi "go-backend/internal/http"
+	"go-backend/internal/migrations"
 	"go-backend/internal/worker"
 )
 
 func main() {
 	cfg := config.Load()
+
+	// Run database migrations
+	log.Println("Running database migrations...")
+	if err := migrations.Run(cfg.Database.DSN()); err != nil {
+		log.Fatalf("failed to run migrations: %v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
