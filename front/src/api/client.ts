@@ -1,3 +1,4 @@
+import { getStoredToken } from '../context/AuthContext';
 import type {
   Property,
   Booking,
@@ -5,25 +6,43 @@ import type {
   Conversation,
   SignInRequest,
   SignInResponse,
+  RegisterRequest,
+  RegisterResponse,
   CreateBookingRequest,
+  UpdateBookingRequest,
   ToggleFavouriteRequest,
   ToggleFavouriteResponse,
   SendMessageRequest,
   PropertiesFilter,
+  CreatePropertyRequest,
+  UpdatePropertyRequest,
+  User,
 } from './types';
 
 const API_BASE = 'http://localhost:8080/api';
 
 async function fetchApi<T>(
   endpoint: string,
-  options?: RequestInit
+  options?: RequestInit & { skipAuth?: boolean }
 ): Promise<T> {
+  const { skipAuth, ...fetchOptions } = options || {};
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(fetchOptions?.headers as Record<string, string>),
+  };
+
+  // Add Authorization header if token exists and not skipping auth
+  if (!skipAuth) {
+    const token = getStoredToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  }
+
   const response = await fetch(`${API_BASE}${endpoint}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
-    ...options,
+    ...fetchOptions,
+    headers,
   });
 
   if (!response.ok) {
@@ -42,6 +61,14 @@ export const api = {
       fetchApi<SignInResponse>('/auth/signin', {
         method: 'POST',
         body: JSON.stringify(data),
+        skipAuth: true,
+      }),
+
+    register: (data: RegisterRequest) =>
+      fetchApi<RegisterResponse>('/auth/register', {
+        method: 'POST',
+        body: JSON.stringify(data),
+        skipAuth: true,
       }),
   },
 
@@ -51,10 +78,27 @@ export const api = {
       if (filter?.location) params.set('location', filter.location);
       if (filter?.type) params.set('type', filter.type);
       const query = params.toString();
-      return fetchApi<Property[]>(`/properties${query ? `?${query}` : ''}`);
+      return fetchApi<Property[]>(`/properties${query ? `?${query}` : ''}`, { skipAuth: true });
     },
 
-    getById: (id: number) => fetchApi<Property>(`/properties/${id}`),
+    getById: (id: number) => fetchApi<Property>(`/properties/${id}`, { skipAuth: true }),
+
+    create: (data: CreatePropertyRequest) =>
+      fetchApi<Property>('/properties', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+
+    update: (id: number, data: UpdatePropertyRequest) =>
+      fetchApi<Property>(`/properties/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+
+    delete: (id: number) =>
+      fetchApi<{ message: string }>(`/properties/${id}`, {
+        method: 'DELETE',
+      }),
   },
 
   favourites: {
@@ -75,6 +119,17 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+
+    update: (id: number, data: UpdateBookingRequest) =>
+      fetchApi<Booking>(`/bookings/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+
+    delete: (id: number) =>
+      fetchApi<{ message: string }>(`/bookings/${id}`, {
+        method: 'DELETE',
+      }),
   },
 
   conversations: {
@@ -90,5 +145,9 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }),
+  },
+
+  admin: {
+    getUsers: () => fetchApi<User[]>('/admin/users'),
   },
 };

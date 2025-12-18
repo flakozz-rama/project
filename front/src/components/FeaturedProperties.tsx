@@ -103,7 +103,7 @@ export function FeaturedProperties({ onViewProperty }: FeaturedPropertiesProps) 
                   <div className="flex items-center justify-between">
                     <div>
                       <span className="text-2xl text-slate-900">
-                        ${property.price}
+                        ${property.price_per_night}
                       </span>
                       <span className="text-slate-600 ml-1">{t("featured.perMonth")}</span>
                     </div>

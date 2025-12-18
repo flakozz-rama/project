@@ -43,7 +43,7 @@ export function BookingPage({ propertyId, onBack, onBookingComplete }: BookingPa
     title: propertyData?.title || "Loading...",
     location: propertyData?.location || "",
     image: propertyData?.image || "https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=400",
-    price: propertyData?.price || 0,
+    price: propertyData?.price_per_night || 0,
     cleaningFee: 50,
     serviceFee: 35,
     rating: propertyData?.rating || 0,

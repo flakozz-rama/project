@@ -47,7 +47,7 @@ export function Favourites({ onBack, onViewProperty, onBookNow }: FavouritesProp
     title: p.title,
     location: p.location,
     image: p.image,
-    price: p.price,
+    price: p.price_per_night,
     rating: p.rating,
     reviews: p.reviews,
     bedrooms: p.bedrooms,

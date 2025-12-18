@@ -1,4 +1,4 @@
-.PHONY: help setup install-tools db-create migrate migrate-down migrate-status seed run build clean
+.PHONY: help setup install-tools db-create migrate migrate-down migrate-down-all migrate-status migrate-force migrate-create seed run build clean db-reset test
 
 # Load .env file
 ifneq (,$(wildcard ./.env))
@@ -6,7 +6,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-# Database URL
+# Database URL for golang-migrate
 DATABASE_URL ?= postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
 
 help: ## Show this help
@@ -14,9 +14,9 @@ help: ## Show this help
 
 setup: install-tools db-create migrate seed ## Full setup: install tools, create DB, run migrations, seed data
 
-install-tools: ## Install required tools (atlas)
-	@echo "Installing Atlas CLI..."
-	@which atlas > /dev/null || curl -sSf https://atlasgo.sh | sh
+install-tools: ## Install required tools (golang-migrate)
+	@echo "Installing golang-migrate..."
+	@which migrate > /dev/null || go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
 	@echo "Installing Go dependencies..."
 	@go mod download
 	@echo "Done!"
@@ -27,24 +27,30 @@ db-create: ## Create database if not exists
 		PGPASSWORD=$(POSTGRES_PASSWORD) psql -h $(POSTGRES_HOST) -p $(POSTGRES_PORT) -U $(POSTGRES_USER) -d postgres -c "CREATE DATABASE $(POSTGRES_DB)"
 	@echo "Done!"
 
-migrate: ## Run migrations
+migrate: ## Run all pending migrations
 	@echo "Running migrations..."
-	@atlas schema apply \
-		--url "$(DATABASE_URL)" \
-		--to "file://schema/schema.hcl" \
-		--dev-url "docker://postgres/16/dev?search_path=public" \
-		--auto-approve
+	@migrate -path migrations -database "$(DATABASE_URL)" up
 	@echo "Done!"
 
-migrate-dry: ## Show migration plan without applying
-	@atlas schema apply \
-		--url "$(DATABASE_URL)" \
-		--to "file://schema/schema.hcl" \
-		--dev-url "docker://postgres/16/dev?search_path=public" \
-		--dry-run
+migrate-down: ## Rollback last migration
+	@echo "Rolling back last migration..."
+	@migrate -path migrations -database "$(DATABASE_URL)" down 1
+	@echo "Done!"
 
-migrate-status: ## Show current schema status
-	@atlas schema inspect --url "$(DATABASE_URL)"
+migrate-down-all: ## Rollback all migrations
+	@echo "Rolling back all migrations..."
+	@migrate -path migrations -database "$(DATABASE_URL)" down -all
+	@echo "Done!"
+
+migrate-status: ## Show current migration version
+	@echo "Current migration version:"
+	@migrate -path migrations -database "$(DATABASE_URL)" version
+
+migrate-force: ## Force set migration version (use: make migrate-force V=1)
+	@migrate -path migrations -database "$(DATABASE_URL)" force $(V)
+
+migrate-create: ## Create new migration (use: make migrate-create NAME=add_feature)
+	@migrate create -ext sql -dir migrations -seq $(NAME)
 
 seed: ## Seed database with demo data
 	@echo "Seeding database..."
@@ -66,3 +72,11 @@ db-reset: ## Drop and recreate database
 	@PGPASSWORD=$(POSTGRES_PASSWORD) psql -h $(POSTGRES_HOST) -p $(POSTGRES_PORT) -U $(POSTGRES_USER) -d postgres -c "CREATE DATABASE $(POSTGRES_DB)"
 	@$(MAKE) migrate seed
 	@echo "Done!"
+
+test: ## Run tests
+	@go test -v ./...
+
+test-coverage: ## Run tests with coverage
+	@go test -v -coverprofile=coverage.out ./...
+	@go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report generated: coverage.html"

@@ -23,6 +23,7 @@ import { Alert, AlertDescription } from "./ui/alert";
 import { useLanguage } from "../context/LanguageContext";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { useSignIn } from "../api";
+import { useAuth } from "../context/AuthContext";
 
 interface SignInProps {
   onBack?: () => void;
@@ -34,6 +35,7 @@ interface SignInProps {
 export function SignIn({ onBack, onSignUp, onSignInSuccess, onForgotPassword }: SignInProps) {
   const { t } = useLanguage();
   const signInMutation = useSignIn();
+  const { login } = useAuth();
 
   const [formData, setFormData] = useState({
     email: "",
@@ -75,7 +77,9 @@ export function SignIn({ onBack, onSignUp, onSignInSuccess, onForgotPassword }: 
     signInMutation.mutate(
       { email: formData.email, password: formData.password },
       {
-        onSuccess: () => {
+        onSuccess: (response) => {
+          // Log in the user with the returned token and user data
+          login(response.token, response.user);
           onSignInSuccess?.();
         },
         onError: (error) => {

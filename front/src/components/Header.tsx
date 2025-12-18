@@ -1,9 +1,10 @@
-import { Home, Menu, User, Heart, Bell, MessageSquare } from "lucide-react";
+import { Home, Menu, User, Heart, Bell, MessageSquare, LogOut } from "lucide-react";
 import { Button } from "./ui/button";
 import { useState } from "react";
 import logoImage from "figma:asset/4078354ea7d87173a875181b965639dc6a347a05.png";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { useLanguage } from "../context/LanguageContext";
+import { useAuth } from "../context/AuthContext";
 
 export function Header({ 
   onNavigateToProfile, 
@@ -30,6 +31,12 @@ export function Header({
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const { t } = useLanguage();
+  const { user, isAuthenticated, logout } = useAuth();
+
+  const handleLogout = () => {
+    logout();
+    setIsMenuOpen(false);
+  };
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80">
@@ -103,21 +110,37 @@ export function Header({
               <Bell className="h-5 w-5" />
               <span className="absolute top-1 right-1 h-2 w-2 bg-red-500 rounded-full"></span>
             </Button>
-            <Button 
-              variant="outline" 
-              className="gap-2"
-              onClick={onNavigateToProfile}
-            >
-              <User className="h-4 w-4" />
-              {t("header.myProfile")}
-            </Button>
-            <LanguageSwitcher />
-            <Button className="bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600" onClick={onNavigateToSignIn}>
-              {t("header.signIn")}
-            </Button>
-            <Button className="bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600" onClick={onNavigateToSignUp}>
-              {t("header.signUp")}
-            </Button>
+            {isAuthenticated ? (
+              <>
+                <Button
+                  variant="outline"
+                  className="gap-2"
+                  onClick={onNavigateToProfile}
+                >
+                  <User className="h-4 w-4" />
+                  {user?.name || t("header.myProfile")}
+                </Button>
+                <LanguageSwitcher />
+                <Button
+                  variant="ghost"
+                  className="gap-2"
+                  onClick={handleLogout}
+                >
+                  <LogOut className="h-4 w-4" />
+                  {t("header.signOut") || "Sign Out"}
+                </Button>
+              </>
+            ) : (
+              <>
+                <LanguageSwitcher />
+                <Button className="bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-700 hover:to-cyan-600" onClick={onNavigateToSignIn}>
+                  {t("header.signIn")}
+                </Button>
+                <Button variant="outline" onClick={onNavigateToSignUp}>
+                  {t("header.signUp")}
+                </Button>
+              </>
+            )}
           </div>
 
           {/* Mobile Menu Button */}
@@ -165,20 +188,35 @@ export function Header({
               </a>
               <div className="flex flex-col gap-2 pt-4 border-t">
                 <LanguageSwitcher />
-                <Button 
-                  variant="outline" 
-                  className="gap-2 w-full"
-                  onClick={onNavigateToProfile}
-                >
-                  <User className="h-4 w-4" />
-                  {t("header.myProfile")}
-                </Button>
-                <Button className="bg-gradient-to-r from-blue-600 to-cyan-500 w-full" onClick={onNavigateToSignIn}>
-                  {t("header.signIn")}
-                </Button>
-                <Button className="bg-gradient-to-r from-blue-600 to-cyan-500 w-full" onClick={onNavigateToSignUp}>
-                  {t("header.signUp")}
-                </Button>
+                {isAuthenticated ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      className="gap-2 w-full"
+                      onClick={() => { onNavigateToProfile?.(); setIsMenuOpen(false); }}
+                    >
+                      <User className="h-4 w-4" />
+                      {user?.name || t("header.myProfile")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      className="gap-2 w-full"
+                      onClick={handleLogout}
+                    >
+                      <LogOut className="h-4 w-4" />
+                      {t("header.signOut") || "Sign Out"}
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button className="bg-gradient-to-r from-blue-600 to-cyan-500 w-full" onClick={() => { onNavigateToSignIn?.(); setIsMenuOpen(false); }}>
+                      {t("header.signIn")}
+                    </Button>
+                    <Button variant="outline" className="w-full" onClick={() => { onNavigateToSignUp?.(); setIsMenuOpen(false); }}>
+                      {t("header.signUp")}
+                    </Button>
+                  </>
+                )}
               </div>
             </nav>
           </div>

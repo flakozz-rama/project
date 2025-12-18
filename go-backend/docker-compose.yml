@@ -4,17 +4,48 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: gorent-postgres
-    env_file:
-      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gorent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gorent123}
+      POSTGRES_DB: ${POSTGRES_DB:-gorent}
     ports:
-      - "${POSTGRES_PORT}:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gorent} -d ${POSTGRES_DB:-gorent}"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - gorent-network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gorent-api
+    environment:
+      PORT: ${PORT:-8080}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-gorent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gorent123}
+      POSTGRES_DB: ${POSTGRES_DB:-gorent}
+      JWT_SECRET: ${JWT_SECRET:-your-256-bit-secret-key-change-in-production}
+      JWT_DURATION_HOURS: ${JWT_DURATION_HOURS:-24}
+    ports:
+      - "${PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - gorent-network
 
 volumes:
   postgres_data:
+
+networks:
+  gorent-network:
+    driver: bridge

@@ -56,7 +56,7 @@ export function PropertyDetails({ propertyId, onBack, onBookNow }: PropertyDetai
     type: propertyData?.type || "Property",
     location: propertyData?.location || "",
     shortLocation: propertyData?.location || "",
-    price: propertyData?.price || 0,
+    price: propertyData?.price_per_night || 0,
     cleaningFee: 50,
     securityDeposit: 200,
     host: {

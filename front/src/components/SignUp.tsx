@@ -20,6 +20,8 @@ import { Separator } from "./ui/separator";
 import { Alert, AlertDescription } from "./ui/alert";
 import { useLanguage } from "../context/LanguageContext";
 import { LanguageSwitcher } from "./LanguageSwitcher";
+import { useRegister } from "../api";
+import { useAuth } from "../context/AuthContext";
 
 interface SignUpProps {
   onBack?: () => void;
@@ -29,7 +31,9 @@ interface SignUpProps {
 
 export function SignUp({ onBack, onLogin, onSignUpSuccess }: SignUpProps) {
   const { t } = useLanguage();
-  
+  const registerMutation = useRegister();
+  const { login } = useAuth();
+
   const [formData, setFormData] = useState({
     firstName: "",
     lastName: "",
@@ -43,8 +47,10 @@ export function SignUp({ onBack, onLogin, onSignUpSuccess }: SignUpProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [isLoading, setIsLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const isLoading = registerMutation.isPending;
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
@@ -87,22 +93,35 @@ export function SignUp({ onBack, onLogin, onSignUpSuccess }: SignUpProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+    setErrorMessage("");
+
     if (!validateForm()) {
       return;
     }
 
-    setIsLoading(true);
-    
-    // Simulate API call
-    setTimeout(() => {
-      setIsLoading(false);
-      setSuccessMessage(t("signup.successMessage"));
-      
-      setTimeout(() => {
-        onSignUpSuccess?.();
-      }, 2000);
-    }, 1500);
+    const name = `${formData.firstName} ${formData.lastName}`.trim();
+
+    registerMutation.mutate(
+      {
+        email: formData.email,
+        name,
+        password: formData.password,
+      },
+      {
+        onSuccess: (response) => {
+          // Log in the user with the returned token and user data
+          login(response.token, response.user);
+          setSuccessMessage(t("signup.successMessage"));
+
+          setTimeout(() => {
+            onSignUpSuccess?.();
+          }, 1500);
+        },
+        onError: (error) => {
+          setErrorMessage(error.message || "Registration failed. Please try again.");
+        },
+      }
+    );
   };
 
   const handleSocialSignUp = (provider: string) => {
@@ -214,6 +233,20 @@ export function SignUp({ onBack, onLogin, onSignUpSuccess }: SignUpProps) {
               </CardHeader>
 
               <CardContent className="space-y-6">
+                {errorMessage && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                  >
+                    <Alert className="bg-red-50 border-red-200">
+                      <AlertCircle className="h-4 w-4 text-red-600" />
+                      <AlertDescription className="text-red-800">
+                        {errorMessage}
+                      </AlertDescription>
+                    </Alert>
+                  </motion.div>
+                )}
+
                 {successMessage && (
                   <motion.div
                     initial={{ opacity: 0, y: -10 }}

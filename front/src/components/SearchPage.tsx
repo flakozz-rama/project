@@ -58,7 +58,7 @@ export function SearchPage({ onBack, onViewProperty }: SearchPageProps) {
     id: p.id,
     title: p.title,
     location: p.location,
-    price: p.price,
+    price: p.price_per_night,
     rating: p.rating,
     reviews: p.reviews,
     guests: p.guests,

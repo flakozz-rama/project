@@ -3,9 +3,13 @@ import { api } from './client';
 import type {
   PropertiesFilter,
   SignInRequest,
+  RegisterRequest,
   CreateBookingRequest,
+  UpdateBookingRequest,
   ToggleFavouriteRequest,
   SendMessageRequest,
+  CreatePropertyRequest,
+  UpdatePropertyRequest,
 } from './types';
 
 export const queryKeys = {
@@ -16,6 +20,7 @@ export const queryKeys = {
   bookings: ['bookings'] as const,
   conversations: ['conversations'] as const,
   messages: (conversationId: number) => ['messages', conversationId] as const,
+  adminUsers: ['admin', 'users'] as const,
 };
 
 // Health check
@@ -46,6 +51,12 @@ export function useProperty(id: number) {
 export function useSignIn() {
   return useMutation({
     mutationFn: (data: SignInRequest) => api.auth.signIn(data),
+  });
+}
+
+export function useRegister() {
+  return useMutation({
+    mutationFn: (data: RegisterRequest) => api.auth.register(data),
   });
 }
 
@@ -115,5 +126,73 @@ export function useSendMessage() {
       });
       queryClient.invalidateQueries({ queryKey: queryKeys.conversations });
     },
+  });
+}
+
+// Property mutations
+export function useCreateProperty() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (data: CreatePropertyRequest) => api.properties.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['properties'] });
+    },
+  });
+}
+
+export function useUpdateProperty() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: UpdatePropertyRequest }) =>
+      api.properties.update(id, data),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['properties'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.property(variables.id) });
+    },
+  });
+}
+
+export function useDeleteProperty() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: number) => api.properties.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['properties'] });
+    },
+  });
+}
+
+// Booking mutations
+export function useUpdateBooking() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: UpdateBookingRequest }) =>
+      api.bookings.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.bookings });
+    },
+  });
+}
+
+export function useDeleteBooking() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: number) => api.bookings.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.bookings });
+    },
+  });
+}
+
+// Admin
+export function useAdminUsers() {
+  return useQuery({
+    queryKey: queryKeys.adminUsers,
+    queryFn: api.admin.getUsers,
   });
 }

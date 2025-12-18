@@ -19,6 +19,7 @@ import { BookingPage } from "./components/BookingPage";
 import { SignUp } from "./components/SignUp";
 import { SignIn } from "./components/SignIn";
 import { LanguageProvider } from "./context/LanguageContext";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 import { useState } from "react";
 
 export default function App() {
@@ -51,8 +52,9 @@ export default function App() {
   };
 
   return (
-    <LanguageProvider>
-      <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
+    <AuthProvider>
+      <LanguageProvider>
+        <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
         {currentPage === "home" ? (
           <>
             <Header 
@@ -138,7 +140,8 @@ export default function App() {
             onBookNow={handleBookNow}
           />
         )}
-      </div>
-    </LanguageProvider>
+        </div>
+      </LanguageProvider>
+    </AuthProvider>
   );
 }
